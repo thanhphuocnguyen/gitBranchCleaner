@@ -48,10 +48,10 @@ func initialModel() tea.Model {
 }
 
 type model struct {
+	state         string // "list", "confirm", "deleting"
 	repo          gitcontrol.Repository
 	multiselect   tui.MultiSelectList
 	confirmdialog tui.ConfirmDialog
-	state         string // "list", "confirm", "deleting"
 	branches      []gitcontrol.Branch
 }
 
