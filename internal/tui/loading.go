@@ -2,7 +2,7 @@ package tui
 
 // loading view
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type LoadingView struct {
