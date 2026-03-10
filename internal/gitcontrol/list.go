@@ -4,6 +4,7 @@ import "github.com/go-git/go-git/v6/plumbing"
 
 type Branch struct {
 	Name      string
+	FullName  string
 	IsCurrent bool
 	Hash      string
 }
@@ -30,6 +31,7 @@ func (r *Repository) ListLocalBranches() ([]Branch, error) {
 		branch := Branch{
 			Name:      branchName,
 			IsCurrent: isCurrent,
+			FullName:  ref.Name().String(),
 			Hash:      branchHash,
 		}
 		branches = append(branches, branch)

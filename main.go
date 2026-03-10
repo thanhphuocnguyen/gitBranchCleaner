@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"github.com/thanhphuocnguyen/git-branch-cleaner/internal/gitcontrol"
 	"github.com/thanhphuocnguyen/git-branch-cleaner/internal/tui"
@@ -28,119 +27,99 @@ func initialModel() tea.Model {
 		os.Exit(1)
 	}
 
-	branches, err := repo.ListLocalBranches()
-	if err != nil {
-		fmt.Printf("Error listing branches: %v\n", err)
-		os.Exit(1)
-	}
-
-	if len(branches) == 0 {
-		fmt.Println("No local branches found.")
-		os.Exit(0)
-	}
-
-	items := make([]list.Item, len(branches))
-
-	for i, br := range branches {
-		items[i] = tui.NewItem(br.Name, br.Hash, !br.IsCurrent)
-	}
-
 	return model{
-		repo:        *repo,
-		multiselect: tui.NewMultiSelectList(items),
-		state:       "list",
-		branches:    branches,
+		state:   "loading",
+		repo:    *repo,
+		spinner: tui.NewLoadingSpinner("Loading branches..."),
 	}
+}
+
+type branchesLoadedMsg struct {
+	branches []gitcontrol.Branch
+	err      error
 }
 
 type model struct {
-	state         string // "list", "confirm", "deleting"
-	repo          gitcontrol.Repository
-	multiselect   tui.MultiSelectList
-	confirmdialog tui.ConfirmDialog
-	branches      []gitcontrol.Branch
+	state   string // "welcome", "list", "confirm", "deleting"
+	spinner tui.LoadingSpinner
+	welcome tui.WelcomeScreen
+	table   tui.BranchTable
+
+	repo     gitcontrol.Repository
+	branches []gitcontrol.Branch
+}
+
+func (m model) loadBranchesCmd(repo gitcontrol.Repository) tea.Cmd {
+	return func() tea.Msg {
+		branches, err := repo.ListLocalBranches()
+		return branchesLoadedMsg{branches: branches, err: err}
+	}
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return tea.Batch(m.loadBranchesCmd(m.repo), m.spinner.Init())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.state {
-	case "list":
+	case "loading":
 		switch msg := msg.(type) {
+		case branchesLoadedMsg:
+			if msg.err != nil {
+				fmt.Printf("Error listing branches: %v\n", msg.err)
+				return m, tea.Quit
+			}
+
+			if len(msg.branches) == 0 {
+				fmt.Println("No local branches found.")
+				return m, tea.Quit
+			}
+
+			m.state = "welcome"
+			m.branches = msg.branches
+			m.welcome = tui.NewWelComeScreen()
+			return m, nil
 		case tea.KeyPressMsg:
-			switch msg.String() {
-			case "shift+enter":
-				selected := m.multiselect.SelectedItems()
-				if len(selected) > 0 {
-					m.confirmdialog = tui.NewConfirmDialog(
-						fmt.Sprintf("Delete %d branches?", len(selected)),
-					)
-					m.state = "confirm"
-				}
-			case "q", "ctrl+c":
+			if msg.String() == "q" || msg.String() == "ctrl+c" {
 				return m, tea.Quit
 			}
 		}
 		var cmd tea.Cmd
-		m.multiselect, cmd = m.multiselect.Update(msg)
+		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
-	case "confirm":
+
+	case "welcome":
+		switch msg.(type) {
+		case tea.KeyPressMsg:
+			// Any key press moves to the list view
+			m.state = "list"
+			m.table = tui.NewTableModel(m.branches)
+			return m, nil
+		}
+
+	case "list":
 		switch msg := msg.(type) {
-		case tui.ConfirmResult:
-			switch msg.Action {
-			case "confirm":
-				if msg.Confirmed {
-					// User confirmed deletion
-					m.state = "deleting"
-					return m, tea.Cmd(func() tea.Msg {
-						return deleteBranchesMsg{}
-					})
-				} else {
-					// User selected "No", return to list
-					m.state = "list"
-					return m, nil
-				}
-			case "cancel":
-				// User cancelled (pressed esc/q), return to list
-				m.state = "list"
-				return m, nil
+		case tea.KeyPressMsg:
+			switch msg.String() {
 			}
 		}
 		var cmd tea.Cmd
-		m.confirmdialog, cmd = m.confirmdialog.Update(msg)
+		m.table, cmd = m.table.Update(msg)
 		return m, cmd
-	case "deleting":
-		switch msg.(type) {
-		case deleteBranchesMsg:
-			selected := m.multiselect.SelectedItems()
-			for _, selectedBranch := range selected {
-				if err := m.repo.DeleteBranch(selectedBranch.Name); err != nil {
-					fmt.Printf("Error deleting branch %s: %v\n", selectedBranch.Name, err)
-				}
-			}
-			m.state = "list"
-			m.branches, _ = m.repo.ListLocalBranches() // Refresh branch list after deletion
-			items := make([]list.Item, len(m.branches))
-			for i, br := range m.branches {
-				items[i] = tui.NewItem(br.Name, br.Hash, !br.IsCurrent)
-			}
-			m.multiselect = tui.NewMultiSelectList(items)
-			return m, nil
-		}
 	}
+
 	return m, nil
 }
 
 func (m model) View() tea.View {
 	switch m.state {
+	case "loading":
+		return m.spinner.View()
+	case "welcome":
+		return m.welcome.View()
 	case "list":
-		return m.multiselect.View()
-	case "confirm":
-		return m.confirmdialog.View()
-	case "deleting":
-		return tea.NewView("Deleting selected branches...")
+		return m.table.View()
+
 	default:
 		return tea.NewView("Unknown state")
 	}
